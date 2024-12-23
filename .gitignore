@@ -1,0 +1,28 @@
+# Compiled binary (default GCC output)
+a.out
+
+# Custom compiled binaries
+*.exe
+
+# Object files
+*.o
+
+# Dependency files
+*.d
+
+# Debugging output
+*.log
+*.out
+*.err
+
+# Temporary or backup files created by editors
+*~
+*.swp
+*.bak
+
+# Core dumps
+core
+
+# Build directories (if any)
+build/
+
