@@ -5,7 +5,8 @@ A little project to explore network programming in C facilitating communication 
 Todo:
 - ~~Change clients from processes to threads~~
 - ~~Add mutex locks for safety once threads are implemented~~
-- handle disconnects
-- Allow customization of bound port and address.
-- Add time and client information into broadcast messages for clarity
+- ~~Allow customization of bound port~~
+- ~~Add time and client information into broadcast messages for clarity~~
 - Backend to store messages
+- Allow customization of IP
+- Handle disconnect bugs

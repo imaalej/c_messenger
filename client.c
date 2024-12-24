@@ -16,8 +16,8 @@ void handle_exit(int sig);
 int sockfd;
 
 int main(int argc, char *argv[]) {
-  if (argc < 2) {
-    printf("Please provide an IP to connect to. \n");
+  if (argc < 3) {
+    printf("Usage: client ip_address port\n");
     return 0;
   }
 
@@ -29,7 +29,7 @@ int main(int argc, char *argv[]) {
   hints.ai_socktype = SOCK_STREAM; // Stream Socket
 
   int success;
-  if ((success = getaddrinfo(argv[1], "3496", &hints, &res)) != 0) {
+  if ((success = getaddrinfo(argv[1], argv[2], &hints, &res)) != 0) {
     printf("%s", gai_strerror(success));
     exit(1);
   }
@@ -52,7 +52,7 @@ int main(int argc, char *argv[]) {
 void send_to_server(int sockfd) {
   char send_msg[1024];
   while (1) {
-    printf("You:");
+    printf("\n");
     if (fgets(send_msg, sizeof(send_msg), stdin) == NULL) {
       perror("fgets");
       break;
@@ -88,6 +88,5 @@ void recv_from_server(int sockfd) {
 void handle_exit(int sig) {
   (void)sig; // Unused parameter
   close(sockfd);
-  printf("\nExiting...\n");
   exit(EXIT_SUCCESS);
 }

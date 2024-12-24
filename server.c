@@ -11,24 +11,29 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-// Make connections a pointer
+#define MAX_CONNECTIONS 100
 
 void *get_in_addr(struct sockaddr *addr);
 void broadcast_message(int connections[], char msg[]);
-void add_connection(int connections[], int new_fd);
+void add_connected_peer(int new_fd);
+void remove_disconnected_peer(int new_fd);
 void *handle_client(void *arg);
 
-int MAX_CONNECTIONS = 50;
 int num_clients;
+int connections[MAX_CONNECTIONS];
+pthread_t threads[MAX_CONNECTIONS];
 pthread_mutex_t mutex;
+
+struct client_data {
+  int fd;
+  char *name;
+};
 
 int main(int argc, char *argv[]) {
 
   struct addrinfo hints, *res, *p;
   struct sockaddr_storage their_addr;
   int status, sockfd, b_status, l_status, new_fd;
-  int connections[MAX_CONNECTIONS];
-  pthread_t threads[MAX_CONNECTIONS];
   socklen_t sin_size;
   char ipstr[INET6_ADDRSTRLEN]; // Holds the human readable IP
   char s[INET6_ADDRSTRLEN];
@@ -40,7 +45,12 @@ int main(int argc, char *argv[]) {
   hints.ai_socktype = SOCK_STREAM; // Stream Socket
   hints.ai_flags = AI_PASSIVE;
 
-  if ((status = getaddrinfo(NULL, "3496", &hints, &res)) != 0) {
+  if (argc < 2) {
+    printf("Please indicate port to use.");
+    return 0;
+  }
+
+  if ((status = getaddrinfo(NULL, argv[1], &hints, &res)) != 0) {
     printf("%s\n", gai_strerror(status));
   }
 
@@ -48,17 +58,13 @@ int main(int argc, char *argv[]) {
     if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
       perror("Server: socket");
       continue;
-    } else {
-      printf("Socket descriptor initialized.\n");
     }
+
     if ((b_status = bind(sockfd, p->ai_addr, p->ai_addrlen)) == -1) {
       shutdown(sockfd, SHUT_RDWR);
       perror("Server: bind");
       continue;
-    } else {
-      printf("Bound socket descriptor sucecssfully.\n");
     }
-
     break;
   }
 
@@ -72,9 +78,9 @@ int main(int argc, char *argv[]) {
   if ((l_status = listen(sockfd, 10)) == -1) {
     shutdown(sockfd, SHUT_RDWR);
     perror("Server: listen");
-  } else {
-    printf("Listening...");
   }
+
+  printf("Server initialized and listening...\n");
 
   while (1) {
     new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
@@ -89,60 +95,68 @@ int main(int argc, char *argv[]) {
 
     printf("server: got connection from %s\n", s);
 
-    void **args = malloc(2 * sizeof(void *));
-
-    if (args == NULL) {
+    struct client_data *data = malloc(sizeof(struct client_data));
+    if (data == NULL) {
       perror("malloc");
       close(new_fd);
       continue;
     }
 
-    args[0] = &new_fd;
-    args[1] = connections;
+    data->fd = new_fd;
+    data->name = s;
 
     if (pthread_create(&threads[num_clients], NULL, &handle_client,
-                       (void *)args) != 0) {
+                       (void *)data) != 0) {
       perror("pthread create");
       close(new_fd);
+      free(data->name);
+      free(data);
       continue;
     }
-    pthread_mutex_lock(&mutex);
-    num_clients++;
-    pthread_mutex_unlock(&mutex);
   }
 
   pthread_mutex_destroy(&mutex);
+
+  shutdown(sockfd, SHUT_RDWR);
+  close(sockfd);
 
   return EXIT_SUCCESS;
 }
 
 void *handle_client(void *arg) {
   char recv_msg[1024];
-  void **args = (void **)arg;
-  int fd = *(int *)args[0];
-  int *connections = (int *)args[1];
+  char packed_msg[1024];
 
-  pthread_mutex_lock(&mutex);
-  add_connection(connections, fd);
-  pthread_mutex_unlock(&mutex);
+  struct client_data *local_data = (struct client_data *)arg;
+  int fd = local_data->fd;
+
+  add_connected_peer(fd);
 
   while (1) {
     memset(recv_msg, 0, sizeof(recv_msg));
     ssize_t bytes_received = recv(fd, &recv_msg, sizeof(recv_msg) - 1, 0);
     if (bytes_received == -1) {
       perror("recv");
+    } else if (bytes_received == 0) {
+      remove_disconnected_peer(fd);
+      free(local_data->name);
+      free(local_data);
+      break;
     }
     recv_msg[bytes_received] = '\0';
 
+    time_t t = time(NULL);
+    struct tm *tm_info = localtime(&t);
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
+    int msg_len = snprintf(packed_msg, sizeof(packed_msg), "%s at %s: %s",
+                           local_data->name, time_str, recv_msg);
+
     pthread_mutex_lock(&mutex);
-    broadcast_message(connections, recv_msg);
+    broadcast_message(connections, packed_msg);
     pthread_mutex_unlock(&mutex);
   }
 
-  // remove client
-  close(fd);
-  free(args[1]);
-  free(args);
   return NULL;
 }
 
@@ -154,7 +168,7 @@ void *get_in_addr(struct sockaddr *addr) {
 }
 
 void broadcast_message(int connections[], char msg[]) {
-  printf("%s\n", msg);
+
   for (int i = 0; i < num_clients; i++) {
     if ((send(connections[i], msg, strlen(msg), 0)) == -1) {
       perror("broadcast");
@@ -163,13 +177,29 @@ void broadcast_message(int connections[], char msg[]) {
   }
 }
 
-void add_connection(int connections[], int new_fd) {
+void add_connected_peer(int fd) {
+  pthread_mutex_lock(&mutex);
+
   if (num_clients < MAX_CONNECTIONS) {
-    // connections[num_clients++] = new_fd;
-    connections[num_clients] = new_fd;
-    printf("Server: Added new connection.");
+    connections[num_clients++] = fd;
   } else {
-    printf("Maximum client limit reached.");
-    close(new_fd);
+    perror("Max peers reached.");
+    close(fd);
   }
+  pthread_mutex_unlock(&mutex);
+}
+
+void remove_disconnected_peer(int fd) {
+  pthread_mutex_lock(&mutex);
+  for (int i = 0; i < num_clients; i++) {
+    if (connections[i] == fd) {
+      for (int j = i; j < num_clients - 1; j++) {
+        connections[j] = connections[j + 1];
+      }
+      num_clients--;
+      break;
+    }
+  }
+  close(fd);
+  pthread_mutex_unlock(&mutex);
 }
